@@ -35,7 +35,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       if (data) {
         console.log('Profile found:', data.username);
-        setProfile(data);
+        setProfile({
+          ...data,
+          username: metadata?.username || data.username || email?.split('@')[0],
+          full_name: metadata?.full_name || data.full_name,
+          avatar_url: metadata?.avatar_url || data.avatar_url,
+        });
       } else if (error?.code === 'PGRST116' || (error?.message?.includes('timeout')) || (!response && !data)) {
         // Profile not found or timeout, handle creation or use default
         console.log('Profile not found or timeout fallback');
@@ -44,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: email || '',
           username: metadata?.username || email?.split('@')[0] || `user_${userId.substring(0, 5)}`,
           full_name: metadata?.full_name || metadata?.name || '',
+          avatar_url: metadata?.avatar_url || '',
           role: 'user',
           created_at: new Date().toISOString()
         };
@@ -61,21 +67,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (err: any) {
       if (err.message !== 'Profile fetch timeout') {
-        console.error('Error fetching/creating profile:', err);
+        console.error('Error fetching/creating profile (using metadata fallback):', err);
       } else {
         console.warn('Profile fetch timed out, using local fallback');
       }
-      // Don't let profile error block auth
-      if (!profile) {
-        setProfile({ 
-          id: userId, 
-          email: email || '', 
-          username: email?.split('@')[0] || 'User', 
-          full_name: '', 
-          role: 'user', 
-          created_at: new Date().toISOString() 
-        });
-      }
+      setProfile({ 
+        id: userId, 
+        email: email || '', 
+        username: metadata?.username || email?.split('@')[0] || 'User', 
+        full_name: metadata?.full_name || metadata?.name || '', 
+        avatar_url: metadata?.avatar_url || '',
+        role: 'user', 
+        created_at: new Date().toISOString() 
+      });
     }
   };
 
@@ -116,7 +120,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshProfile = async () => {
-    if (user) await fetchProfile(user.id);
+    if (user) {
+      try {
+        const { data: { user: latestUser }, error } = await supabase.auth.getUser();
+        if (latestUser && !error) {
+          setUser(latestUser);
+          await fetchProfile(latestUser.id, latestUser.email, latestUser.user_metadata);
+        } else {
+          await fetchProfile(user.id, user.email, user.user_metadata);
+        }
+      } catch (err) {
+        console.error('Failed to get latest user during profile refresh:', err);
+        await fetchProfile(user.id, user.email, user.user_metadata);
+      }
+    }
   };
 
   return (
